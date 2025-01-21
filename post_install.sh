@@ -59,8 +59,8 @@ psql -d template1 -U postgres -c "ALTER USER ${USER} IDENTIFIED WITH caching_sha
 psql -U postgres -d ${DB} -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;" 2>/dev/null
 
 # Fix permission for postgres 
-echo "listen_addresses = '*'" >> /var/db/postgres/data11/postgresql.conf 2>/dev/null
-echo "host  all  all 0.0.0.0/0 md5" >> /var/db/postgres/data11/pg_hba.conf 2>/dev/null
+echo "listen_addresses = '*'" >> /var/db/postgres/data17/postgresql.conf 2>/dev/null
+echo "host  all  all 0.0.0.0/0 md5" >> /var/db/postgres/data17/pg_hba.conf 2>/dev/null
 
 # Restart postgresql after config change
 service postgresql restart 2>/dev/null
