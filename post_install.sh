@@ -52,7 +52,8 @@ psql -d template1 -U postgres -c "CREATE USER ${USER} CREATEDB SUPERUSER;" 2>/de
 psql -d template1 -U postgres -c "CREATE DATABASE ${DB} WITH OWNER ${USER} TEMPLATE template0 ENCODING UTF8 LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8';" 2>/dev/null
 
 # Set a password on the postgres account
-psql -d template1 -U postgres -c "ALTER USER ${USER} WITH PASSWORD '${PASS}';" 2>/dev/null
+#psql -d template1 -U postgres -c "ALTER USER ${USER} WITH PASSWORD '${PASS}';" 2>/dev/null
+psql -d template1 -U postgres -c "ALTER USER ${USER} IDENTIFIED WITH caching_sha2_password BY '${PASS}';" 2>/dev/null
 
 # Connect as superuser and enable pg_trgm extension
 psql -U postgres -d ${DB} -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;" 2>/dev/null
