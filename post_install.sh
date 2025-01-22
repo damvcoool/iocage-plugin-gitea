@@ -2,6 +2,7 @@
 
 # Enable service
 sysrc gitea_enable=YES 2>/dev/null
+sysrc gitea_configcheck_enable=NO 2>/dev/null
 
 # Enable SSH for git over ssh
 sysrc sshd_enable=YES 2>/dev/null
@@ -15,7 +16,7 @@ service gitea stop 2>/dev/null
 sleep 5
 
 # Remove default config to allow use of the web installer, set permissions
-#rm /usr/local/etc/gitea/conf/app.ini
+rm /usr/local/etc/gitea/conf/app.ini
 chown -R git:git /usr/local/etc/gitea/conf
 chown -R git:git /usr/local/share/gitea
 
