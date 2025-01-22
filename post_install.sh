@@ -15,15 +15,15 @@ service gitea stop 2>/dev/null
 sleep 5
 
 # Remove default config to allow use of the web installer, set permissions
-rm /usr/local/etc/gitea/conf/app.ini
+#rm /usr/local/etc/gitea/conf/app.ini
 chown -R git:git /usr/local/etc/gitea/conf
 chown -R git:git /usr/local/share/gitea
 
-# Installer only comes up if there is no config so we nuke it once more to be sure
-rm /usr/local/etc/gitea/conf/app.ini 2>/dev/null
 # Start service
 service gitea start
 sleep 5
+# Installer only comes up if there is no config so we nuke it once more to be sure
+mv /usr/local/etc/gitea/conf/app.ini /usr/local/etc/gitea/conf/app.ini.old 2>/dev/null
 
 
 # Setup Postgres
