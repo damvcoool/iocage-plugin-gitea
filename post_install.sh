@@ -29,6 +29,7 @@ sleep 5
 # Setup Postgres
 sysrc -f /etc/rc.conf postgresql_enable="YES"
 
+chmod 777 /tmp
 # Start the service
 service postgresql initdb 2>/dev/null
 sleep 5
