@@ -1,3 +1,6 @@
+# Check existing config before starting
+sysrc gitea_configcheck_enable=NO 2>/dev/null
+
 # Set Permissions for config
 chown -R git:git /usr/local/etc/gitea/conf
 chown -R git:git /usr/local/share/gitea
