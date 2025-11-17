@@ -1,99 +1,186 @@
 #!/bin/sh
 
+# Exit on error
+set -e
+
+# Function to wait for service to be running
+wait_for_service() {
+    service_name="$1"
+    max_attempts=30
+    attempt=0
+    
+    while [ $attempt -lt $max_attempts ]; do
+        if service "$service_name" status >/dev/null 2>&1; then
+            echo "$service_name is running"
+            return 0
+        fi
+        attempt=$((attempt + 1))
+        sleep 2
+    done
+    echo "Warning: $service_name did not start within expected time"
+    return 1
+}
+
 # Enable service
-sysrc gitea_enable=YES 2>/dev/null
-sysrc gitea_configcheck_enable=NO 2>/dev/null
+echo "Configuring Gitea service..."
+sysrc gitea_enable=YES
+sysrc gitea_configcheck_enable=NO
 
 # Enable SSH for git over ssh
-sysrc sshd_enable=YES 2>/dev/null
-service sshd start 2>/dev/null
-sleep 5
+echo "Configuring SSH service..."
+sysrc sshd_enable=YES
+service sshd start || echo "Warning: SSH service may already be running"
+wait_for_service sshd
 
 # Start/stop service to generate configs
-service gitea start 2>/dev/null
-sleep 5
-service gitea stop 2>/dev/null
-sleep 5
+echo "Generating initial Gitea configuration..."
+service gitea start
+wait_for_service gitea
+service gitea stop
+sleep 3
 
 # Remove default config to allow use of the web installer, set permissions
-rm /usr/local/etc/gitea/conf/app.ini
+echo "Setting up Gitea directories..."
+rm -f /usr/local/etc/gitea/conf/app.ini
 chown -R git:git /usr/local/etc/gitea/conf
 chown -R git:git /usr/local/share/gitea
 
 # Start service
+echo "Starting Gitea service..."
 service gitea start
-sleep 5
+wait_for_service gitea
 # Installer only comes up if there is no config so we nuke it once more to be sure
-mv /usr/local/etc/gitea/conf/app.ini /usr/local/etc/gitea/conf/app.ini.old 2>/dev/null
+mv /usr/local/etc/gitea/conf/app.ini /usr/local/etc/gitea/conf/app.ini.old 2>/dev/null || true
 
 
 # Setup Postgres
-sysrc -f /etc/rc.conf postgresql_enable="YES"
+echo "Setting up PostgreSQL database..."
+sysrc postgresql_enable="YES"
 
-chmod 777 /tmp
-# Start the service
-service postgresql initdb 2>/dev/null
-sleep 5
-service postgresql start 2>/dev/null
-sleep 5
+chmod 1777 /tmp
+
+# Initialize PostgreSQL database
+# The initdb command is idempotent and will skip if already initialized
+echo "Initializing PostgreSQL database..."
+service postgresql initdb
+echo "PostgreSQL initialization complete"
+
+echo "Starting PostgreSQL service..."
+service postgresql start
+wait_for_service postgresql
 
 USER="gitea"
 DB="gitea"
 
 # Save the config values
+echo "Creating database credentials..."
 echo "$DB" > /root/dbname
 echo "$USER" > /root/dbuser
 export LC_ALL=C
-cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1 > /root/dbpassword
-PASS=`cat /root/dbpassword`
+tr -dc 'a-zA-Z0-9' < /dev/urandom | fold -w 16 | head -n 1 > /root/dbpassword
+PASS=$(cat /root/dbpassword)
 
-# create user
-psql -d template1 -U postgres -c "CREATE USER ${USER} CREATEDB SUPERUSER;" 2>/dev/null
+echo "Creating PostgreSQL user and database..."
+# Create user
+if ! psql -d template1 -U postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='${USER}'" | grep -q 1; then
+    psql -d template1 -U postgres -c "CREATE USER ${USER} CREATEDB;"
+    echo "User ${USER} created"
+else
+    echo "User ${USER} already exists"
+fi
 
 # Create production database & grant all privileges on database
-psql -d template1 -U postgres -c "CREATE DATABASE ${DB} WITH OWNER ${USER} TEMPLATE template0 ENCODING UTF8 LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8';" 2>/dev/null
+if ! psql -d template1 -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${DB}'" | grep -q 1; then
+    psql -d template1 -U postgres -c "CREATE DATABASE ${DB} WITH OWNER ${USER} TEMPLATE template0 ENCODING UTF8 LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8';"
+    echo "Database ${DB} created"
+else
+    echo "Database ${DB} already exists"
+fi
 
-# Set a password on the postgres account
-#psql -d template1 -U postgres -c "ALTER USER ${USER} WITH PASSWORD '${PASS}';" 2>/dev/null
-psql -d template1 -U postgres -c "ALTER USER ${USER} IDENTIFIED WITH caching_sha2_password BY '${PASS}';" 2>/dev/null
+# Set a password on the postgres account using correct PostgreSQL syntax
+psql -d template1 -U postgres -c "ALTER USER ${USER} WITH PASSWORD '${PASS}';"
+echo "Password set for user ${USER}"
 
 # Connect as superuser and enable pg_trgm extension
-psql -U postgres -d ${DB} -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;" 2>/dev/null
+psql -U postgres -d ${DB} -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+echo "PostgreSQL pg_trgm extension enabled"
 
-# Fix permission for postgres 
-echo "listen_addresses = '*'" >> /var/db/postgres/data17/postgresql.conf 2>/dev/null
-echo "host  all  all 0.0.0.0/0 md5" >> /var/db/postgres/data17/pg_hba.conf 2>/dev/null
+# Configure PostgreSQL to allow remote connections
+echo "Configuring PostgreSQL access..."
+# Detect PostgreSQL data directory dynamically
+PG_DATA_DIR=$(psql -U postgres -t -c "SHOW data_directory;" 2>/dev/null | xargs)
 
-# Restart postgresql after config change
-service postgresql restart 2>/dev/null
-sleep 5
+if [ -n "$PG_DATA_DIR" ] && [ -d "$PG_DATA_DIR" ]; then
+    echo "PostgreSQL data directory: $PG_DATA_DIR"
+    
+    # Check if configuration already exists
+    if ! grep -q "listen_addresses = '\*'" "$PG_DATA_DIR/postgresql.conf" 2>/dev/null; then
+        echo "listen_addresses = '*'" >> "$PG_DATA_DIR/postgresql.conf"
+        echo "Added listen_addresses to postgresql.conf"
+    fi
+    
+    if ! grep -q "host  all  all 0.0.0.0/0 md5" "$PG_DATA_DIR/pg_hba.conf" 2>/dev/null; then
+        echo "host  all  all 0.0.0.0/0 md5" >> "$PG_DATA_DIR/pg_hba.conf"
+        echo "Added host entry to pg_hba.conf"
+    fi
+    
+    # Restart postgresql after config change
+    echo "Restarting PostgreSQL to apply configuration..."
+    service postgresql restart
+    wait_for_service postgresql
+else
+    echo "Warning: Could not detect PostgreSQL data directory, skipping remote access configuration"
+fi
 
 # Save database information
-echo "Host: localhost or 127.0.0.1" > /root/PLUGIN_INFO
-echo "Database Type: PostgresSQL" >> /root/PLUGIN_INFO
-echo "Database Name: $DB" >> /root/PLUGIN_INFO
-echo "Database User: $USER" >> /root/PLUGIN_INFO
-echo "Database Password: $PASS" >> /root/PLUGIN_INFO
+echo "Saving database configuration..."
+cat > /root/PLUGIN_INFO <<EOF
+Host: localhost or 127.0.0.1
+Database Type: PostgreSQL
+Database Name: $DB
+Database User: $USER
+Database Password: $PASS
+EOF
 
-# Thank you Asigra plugin for your service on this hack
-echo "Figure out our Network IP"
-#Very Dirty Hack to get the ip for dhcp, the problem is that IOCAGE_PLUGIN_IP doesent work on DCHP clients
-#cat /var/db/dhclient.leases* | grep fixed-address | uniq | cut -d " " -f4 | cut -d ";" -f1 > /root/dhcpip
-#netstat -nr | grep lo0 | awk '{print $1}' | uniq | cut -d " " -f4 | cut -d ";" -f1 > /root/dhcpip
-netstat -nr | grep lo0 | grep -v '::' | grep -v '127.0.0.1' | awk '{print $1}' | head -n 1 > /root/dhcpip
-#netstat -nr | grep lo0 | awk '{print $1}' > /root/dhcpip 
-#sed -i.bak '2,$d' /root/dhcpip 
-IP=`cat /root/dhcpip`
-#rm /root/dhcpip.bak
+echo "Detecting jail IP address..."
+# Get the jail's primary IP address
+# Try multiple methods to be robust across different network configurations
+IP=""
+
+# Method 1: Check for iocage environment variable (most reliable for iocage jails)
+if [ -n "$IOCAGE_PLUGIN_IP" ]; then
+    IP="$IOCAGE_PLUGIN_IP"
+    echo "Using IOCAGE_PLUGIN_IP: $IP"
+# Method 2: Get from ifconfig (works for static IPs)
+elif IP=$(ifconfig | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1' | awk '{print $2}' | head -n1); then
+    echo "Detected IP from ifconfig: $IP"
+# Method 3: Fallback to hostname resolution
+elif IP=$(hostname -I 2>/dev/null | awk '{print $1}'); then
+    echo "Detected IP from hostname: $IP"
+else
+    # Final fallback
+    IP="<jail-ip-address>"
+    echo "Could not auto-detect IP, using placeholder"
+fi
 
 # Show user database details 
 echo "-------------------------------------------------------"
-echo "DATABASE INFORMATION"
+echo "GITEA INSTALLATION COMPLETE"
 echo "-------------------------------------------------------"
-echo "Host: localhost or 127.0.0.1" 
-echo "Database Type: PostgresSQL" 
-echo "Database Name: $DB" 
-echo "Database User: $USER" 
-echo "Database Password: $PASS" 
-echo "To begin the installation go to http://${IP}:3000/install"
-echo "To review this information again click Post Install Notes"
+echo ""
+echo "DATABASE INFORMATION:"
+echo "  Host: localhost or 127.0.0.1" 
+echo "  Database Type: PostgreSQL" 
+echo "  Database Name: $DB" 
+echo "  Database User: $USER" 
+echo "  Database Password: $PASS" 
+echo ""
+echo "NEXT STEPS:"
+echo "  1. Open your web browser and navigate to:"
+echo "     http://${IP}:3000/install"
+echo "  2. Complete the web-based installation wizard"
+echo "  3. Use the database credentials shown above"
+echo ""
+echo "NOTE: To review this information again, click 'Post Install Notes'"
+echo "      or check the file /root/PLUGIN_INFO"
+echo "-------------------------------------------------------"

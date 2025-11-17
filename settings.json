@@ -1,24 +1,24 @@
 {
-	"servicerestart":"service gitea restart",
+	"servicerestart": "service gitea restart",
 	"serviceget": "/usr/local/bin/pluginget",
 	"serviceset": "/usr/local/bin/pluginset",
 	"options": {
 		"dbname": {
 			"type": "string",
 			"name": "Database Name",
-			"description": "Database to use for Gitea setup",
+			"description": "Database name for Gitea (PostgreSQL)",
 			"readonly": true
 		},
 		"dbuser": {
 			"type": "string",
 			"name": "Database Username",
-			"description": "Username to use for Gitea Database setup",
+			"description": "Username for Gitea database access (PostgreSQL)",
 			"readonly": true
 		},
 		"dbpassword": {
 			"type": "string",
 			"name": "Database Password",
-			"description": "Password to use for Gitea Database setup",
+			"description": "Password for Gitea database access (PostgreSQL)",
 			"readonly": true
 		}
 	}
