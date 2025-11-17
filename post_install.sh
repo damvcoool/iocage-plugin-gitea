@@ -59,13 +59,11 @@ sysrc postgresql_enable="YES"
 
 chmod 1777 /tmp
 
-# Initialize and start PostgreSQL
-if [ ! -d /var/db/postgres ]; then
-    echo "Initializing PostgreSQL database..."
-    service postgresql initdb
-else
-    echo "PostgreSQL database already initialized"
-fi
+# Initialize PostgreSQL database
+# The initdb command is idempotent and will skip if already initialized
+echo "Initializing PostgreSQL database..."
+service postgresql initdb
+echo "PostgreSQL initialization complete"
 
 echo "Starting PostgreSQL service..."
 service postgresql start
