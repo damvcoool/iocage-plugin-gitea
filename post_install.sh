@@ -5,12 +5,12 @@ set -e
 
 # Function to wait for service to be running
 wait_for_service() {
-    local service_name=$1
-    local max_attempts=30
-    local attempt=0
+    service_name="$1"
+    max_attempts=30
+    attempt=0
     
     while [ $attempt -lt $max_attempts ]; do
-        if service $service_name status >/dev/null 2>&1; then
+        if service "$service_name" status >/dev/null 2>&1; then
             echo "$service_name is running"
             return 0
         fi
@@ -79,8 +79,8 @@ echo "Creating database credentials..."
 echo "$DB" > /root/dbname
 echo "$USER" > /root/dbuser
 export LC_ALL=C
-cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1 > /root/dbpassword
-PASS=`cat /root/dbpassword`
+tr -dc 'a-zA-Z0-9' < /dev/urandom | fold -w 16 | head -n 1 > /root/dbpassword
+PASS=$(cat /root/dbpassword)
 
 echo "Creating PostgreSQL user and database..."
 # Create user
