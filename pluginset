@@ -1,0 +1,14 @@
+#!/bin/sh
+# Plugin settings setter script
+# Sets configuration values from the TrueNAS plugin UI
+
+case "$1" in
+    dbname|dbuser|dbpassword)
+        echo "Error: Database settings are read-only and configured during installation" >&2
+        exit 1
+        ;;
+    *)
+        echo "Unknown setting: $1" >&2
+        exit 1
+        ;;
+esac

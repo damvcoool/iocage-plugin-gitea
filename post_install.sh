@@ -142,6 +142,32 @@ Database User: $USER
 Database Password: $PASS
 EOF
 
+# Install helper scripts to system path
+echo "Installing helper scripts..."
+if [ -f /root/gitea-backup.sh ]; then
+    cp /root/gitea-backup.sh /usr/local/bin/gitea-backup.sh
+    chmod +x /usr/local/bin/gitea-backup.sh
+    echo "  ✓ Backup script installed to /usr/local/bin/gitea-backup.sh"
+fi
+
+if [ -f /root/health-check.sh ]; then
+    cp /root/health-check.sh /usr/local/bin/gitea-health-check.sh
+    chmod +x /usr/local/bin/gitea-health-check.sh
+    echo "  ✓ Health check script installed to /usr/local/bin/gitea-health-check.sh"
+fi
+
+if [ -f /root/pluginget ]; then
+    cp /root/pluginget /usr/local/bin/pluginget
+    chmod +x /usr/local/bin/pluginget
+    echo "  ✓ Plugin getter script installed"
+fi
+
+if [ -f /root/pluginset ]; then
+    cp /root/pluginset /usr/local/bin/pluginset
+    chmod +x /usr/local/bin/pluginset
+    echo "  ✓ Plugin setter script installed"
+fi
+
 echo "Detecting jail IP address..."
 # Get the jail's primary IP address
 # Try multiple methods to be robust across different network configurations
@@ -180,6 +206,12 @@ echo "  1. Open your web browser and navigate to:"
 echo "     http://${IP}:3000/install"
 echo "  2. Complete the web-based installation wizard"
 echo "  3. Use the database credentials shown above"
+echo ""
+echo "HELPFUL COMMANDS:"
+echo "  - Health Check: gitea-health-check.sh"
+echo "  - Backup: gitea-backup.sh backup"
+echo "  - Restore: gitea-backup.sh restore <backup-name>"
+echo "  - List Backups: gitea-backup.sh list"
 echo ""
 echo "NOTE: To review this information again, click 'Post Install Notes'"
 echo "      or check the file /root/PLUGIN_INFO"

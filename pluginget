@@ -1,0 +1,33 @@
+#!/bin/sh
+# Plugin settings getter script
+# Returns configuration values for the TrueNAS plugin UI
+
+case "$1" in
+    dbname)
+        if [ -f /root/dbname ]; then
+            cat /root/dbname
+        else
+            echo "gitea"
+        fi
+        ;;
+    dbuser)
+        if [ -f /root/dbuser ]; then
+            cat /root/dbuser
+        else
+            echo "gitea"
+        fi
+        ;;
+    dbpassword)
+        if [ -f /root/dbpassword ]; then
+            cat /root/dbpassword
+        else
+            echo "Not configured"
+        fi
+        ;;
+    *)
+        echo "Unknown setting: $1" >&2
+        exit 1
+        ;;
+esac
+
+exit 0
