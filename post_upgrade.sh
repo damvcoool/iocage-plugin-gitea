@@ -1,5 +1,8 @@
 #!/bin/sh
 
+# Exit on error
+set -e
+
 # Function to wait for service to be running
 wait_for_service() {
     service_name="$1"
@@ -19,6 +22,14 @@ wait_for_service() {
 }
 
 echo "Upgrading Gitea plugin..."
+
+# Create automatic backup before upgrade
+echo "Creating pre-upgrade backup..."
+if [ -f /usr/local/bin/gitea-backup.sh ]; then
+    /usr/local/bin/gitea-backup.sh backup || echo "Warning: Backup failed, continuing with upgrade"
+else
+    echo "Warning: Backup script not found, skipping automatic backup"
+fi
 
 # Check existing config before starting
 echo "Configuring Gitea service..."
