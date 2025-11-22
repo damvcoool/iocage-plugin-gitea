@@ -63,7 +63,8 @@ check_database_connection() {
     DB=$(cat /root/dbname)
     USER=$(cat /root/dbuser)
     
-    if psql -U "$USER" -d "$DB" -c "SELECT 1" >/dev/null 2>&1; then
+    # Use postgres user for connection test as it doesn't require password
+    if psql -U postgres -d "$DB" -c "SELECT 1" >/dev/null 2>&1; then
         print_status "OK" "PostgreSQL database connection successful"
         return 0
     else
@@ -73,6 +74,11 @@ check_database_connection() {
 }
 
 check_disk_space() {
+    if [ ! -d /usr/local/share/gitea ]; then
+        print_status "WARN" "Gitea data directory does not exist yet"
+        return 1
+    fi
+    
     usage=$(df -h /usr/local/share/gitea | tail -1 | awk '{print $5}' | sed 's/%//')
     
     if [ "$usage" -lt 80 ]; then

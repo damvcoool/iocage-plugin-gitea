@@ -159,11 +159,13 @@ fi
 if [ -f /root/pluginget ]; then
     cp /root/pluginget /usr/local/bin/pluginget
     chmod +x /usr/local/bin/pluginget
+    echo "  ✓ Plugin getter script installed"
 fi
 
 if [ -f /root/pluginset ]; then
     cp /root/pluginset /usr/local/bin/pluginset
     chmod +x /usr/local/bin/pluginset
+    echo "  ✓ Plugin setter script installed"
 fi
 
 echo "Detecting jail IP address..."

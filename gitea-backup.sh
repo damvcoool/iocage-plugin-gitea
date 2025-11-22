@@ -134,6 +134,9 @@ restore_gitea() {
     sleep 3
     
     # Restore database
+    # Note: This uses postgres superuser for restore operations.
+    # This is acceptable in a TrueNAS jail environment where the restore
+    # script is only accessible to the root user.
     if [ -f "${BACKUP_PATH}/gitea-db.dump" ]; then
         echo "Restoring PostgreSQL database..."
         if [ -f /root/dbname ] && [ -f /root/dbuser ]; then
@@ -169,7 +172,21 @@ list_backups() {
     echo "Available backups:"
     echo ""
     
-    if [ ! -d "${BACKUP_DIR}" ] || [ -z "$(ls -A ${BACKUP_DIR} 2>/dev/null)" ]; then
+    if [ ! -d "${BACKUP_DIR}" ]; then
+        echo "  No backups found (backup directory doesn't exist)"
+        return
+    fi
+    
+    # Check if directory has any subdirectories
+    has_backups=0
+    for backup in "${BACKUP_DIR}"/*; do
+        if [ -d "$backup" ]; then
+            has_backups=1
+            break
+        fi
+    done
+    
+    if [ $has_backups -eq 0 ]; then
         echo "  No backups found"
         return
     fi
