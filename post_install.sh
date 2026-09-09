@@ -119,8 +119,8 @@ if [ -n "$PG_DATA_DIR" ] && [ -d "$PG_DATA_DIR" ]; then
         echo "Added listen_addresses to postgresql.conf"
     fi
     
-    if ! grep -q "host  all  all 0.0.0.0/0 md5" "$PG_DATA_DIR/pg_hba.conf" 2>/dev/null; then
-        echo "host  all  all 0.0.0.0/0 md5" >> "$PG_DATA_DIR/pg_hba.conf"
+    if ! grep -q "host  all  all 0.0.0.0/0 scram-sha-256" "$PG_DATA_DIR/pg_hba.conf" 2>/dev/null; then
+        echo "host  all  all 0.0.0.0/0 scram-sha-256" >> "$PG_DATA_DIR/pg_hba.conf"
         echo "Added host entry to pg_hba.conf"
     fi
     
