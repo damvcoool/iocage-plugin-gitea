@@ -78,6 +78,7 @@ normalize_db_program() {
 
 cleanup_backup() {
     rm -f "$BACKUP_FILE" "$META_FILE"
+    touch /tmp/.gitea_pg_post_restore
     echo "Removed pre-upgrade backup artifacts."
 }
 
@@ -98,21 +99,62 @@ load_db_settings_from_app_ini() {
 
 restore_postgresql_backup() {
     echo "Restoring PostgreSQL backup with upgraded PostgreSQL version..."
-    sysrc postgresql_enable=YES >/dev/null
+    sysrc postgresql_enable="YES" >/dev/null
     chmod 1777 /tmp
 
+    # Ensure we have a valid data directory before attempting initdb
+    PG_DATA_DIR="$(su -m postgres -c 'psql -tAc "SHOW data_directory;"' 2>/dev/null | xargs)"
+    NEEDS_INITDB=false
+
     if ! service postgresql onestatus >/dev/null 2>&1; then
-        echo "Initializing PostgreSQL data directory for upgraded service..."
-        service postgresql initdb || true
+        NEEDS_INITDB=true
+        echo "PostgreSQL service not running — initializing new data directory..."
+    elif [ -z "$PG_DATA_DIR" ] || [ ! -d "$PG_DATA_DIR" ]; then
+        NEEDS_INITDB=true
+        echo "PostgreSQL data directory missing at $PG_DATA_DIR — initializing..."
     fi
 
-    service postgresql onestart || service postgresql start || true
-    wait_for_service postgresql
+    if [ "$NEEDS_INITDB" = true ]; then
+        if ! service postgresql initdb; then
+            echo "ERROR: PostgreSQL initdb failed. Cannot proceed without a valid data directory."
+            echo "Investigate the error above and resolve manually."
+            exit 1
+        fi
+        echo "PostgreSQL data directory initialized successfully."
+
+        # Validate that the data directory exists and has correct ownership
+        PG_DATA_DIR="$(su -m postgres -c 'psql -tAc "SHOW data_directory;"' 2>/dev/null | xargs)"
+        if [ -z "$PG_DATA_DIR" ] || [ ! -d "$PG_DATA_DIR" ]; then
+            echo "ERROR: Data directory was not created at expected location: $PG_DATA_DIR"
+            echo "The package may use a different data directory path for this PostgreSQL version."
+            echo "Please check pkg-message or /usr/local/etc/rc.d/postgresql for clues."
+            exit 1
+        fi
+
+        # Verify ownership is postgres:postgres
+        PG_OWNER="$(ls -ld "$PG_DATA_DIR" 2>/dev/null | awk '{print $3}')"
+        if [ "$PG_OWNER" != "postgres" ]; then
+            echo "ERROR: Data directory owned by '$PG_OWNER' instead of 'postgres'."
+            echo "Fixing ownership by running chown postgres:postgres $PG_DATA_DIR"
+            chown -R postgres:postgres "$PG_DATA_DIR"
+        fi
+    fi
+
+    echo "Starting PostgreSQL service..."
+    if ! service postgresql onestart; then
+        echo "onestart failed, trying start..."
+        service postgresql start
+    fi
+    wait_for_service postgresql || {
+        echo "ERROR: PostgreSQL failed to start. Cannot restore backup."
+        exit 1
+    }
 
     load_db_settings_from_app_ini
 
     # Restore the dump into the upgraded cluster using the same host/port/name/user settings
     # defined in Gitea's [database] section.
+    echo "Restoring database dump..."
     su -m postgres -c "psql -v ON_ERROR_STOP=1 -d postgres -f \"$BACKUP_FILE\""
 
     # Ensure the role and database exist for the Gitea config in use.
@@ -180,11 +222,42 @@ chmod 1777 /tmp
 # Ensure the service is initialized before starting the upgraded instance.
 echo "Starting PostgreSQL database..."
 if ! service postgresql onestatus >/dev/null 2>&1; then
-    echo "Initializing PostgreSQL data directory for upgraded service..."
-    service postgresql initdb || true
+    echo "PostgreSQL service not running — initializing data directory..."
+    # Only initdb if we know we have PostgreSQL installed and this is a fresh start
+    if command -v pg_ctl >/dev/null 2>&1; then
+        if ! service postgresql initdb; then
+            echo "ERROR: PostgreSQL initdb failed. Check logs at /var/log/messages for details."
+            exit 1
+        fi
+        echo "PostgreSQL data directory initialized successfully."
+
+        # Validate the data directory was created
+        PG_DATA_DIR="$(su -m postgres -c 'psql -tAc "SHOW data_directory;"' 2>/dev/null | xargs)"
+        if [ -z "$PG_DATA_DIR" ] || [ ! -d "$PG_DATA_DIR" ]; then
+            echo "ERROR: Data directory not found after initdb at $PG_DATA_DIR"
+            echo "Check PostgreSQL version and cluster name configuration."
+            exit 1
+        fi
+
+        # Ensure correct ownership
+        PG_OWNER="$(ls -ld "$PG_DATA_DIR" 2>/dev/null | awk '{print $3}')"
+        if [ "$PG_OWNER" != "postgres" ]; then
+            echo "Fixing data directory ownership: $PG_DATA_DIR"
+            chown -R postgres:postgres "$PG_DATA_DIR"
+        fi
+    else
+        echo "Warning: pg_ctl not found. PostgreSQL may not be installed."
+    fi
 fi
-service postgresql onestart || service postgresql start || echo "PostgreSQL may already be running"
-wait_for_service postgresql
+echo "Starting PostgreSQL service..."
+if ! service postgresql onestart; then
+    echo "onestart failed, trying start..."
+    service postgresql start
+fi
+wait_for_service postgresql || {
+    echo "ERROR: PostgreSQL failed to start. Aborting upgrade."
+    exit 1
+}
 
 # Start Gitea
 echo "Starting Gitea service..."
