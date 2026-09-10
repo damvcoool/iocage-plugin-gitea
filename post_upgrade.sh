@@ -117,7 +117,7 @@ load_db_settings_from_app_ini() {
 
 restore_postgresql_backup() {
     echo "Restoring PostgreSQL backup with upgraded PostgreSQL version..."
-    sysrc postgresql_enable="YES" >/dev/null
+    sysrc postgresql_enable=YES >/dev/null
     chmod 1777 /tmp
 
     # Ensure we have a valid data directory before attempting initdb
