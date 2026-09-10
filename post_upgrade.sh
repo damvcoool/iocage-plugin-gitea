@@ -4,6 +4,75 @@ set -e
 
 APP_INI="/usr/local/etc/gitea/conf/app.ini"
 META_FILE="/root/.gitea_db_upgrade_meta"
+STATUS_FILE="/root/status"
+CURRENT_STEP="startup"
+LAST_COMMAND="script entry"
+LAST_RESULT="running"
+
+write_status() {
+    cat > "$STATUS_FILE" <<EOF
+step=$CURRENT_STEP
+last_command=$LAST_COMMAND
+result=$LAST_RESULT
+EOF
+}
+
+run_cmd() {
+    step="$1"
+    shift
+    CURRENT_STEP="$step"
+    LAST_COMMAND="$*"
+    LAST_RESULT="running"
+    write_status
+
+    if "$@"; then
+        rc=0
+    else
+        rc=$?
+    fi
+
+    LAST_RESULT="exit $rc"
+    write_status
+
+    if [ $rc -ne 0 ]; then
+        exit $rc
+    fi
+}
+
+run_eval() {
+    step="$1"
+    cmd="$2"
+    CURRENT_STEP="$step"
+    LAST_COMMAND="$cmd"
+    LAST_RESULT="running"
+    write_status
+
+    if eval "$cmd"; then
+        rc=0
+    else
+        rc=$?
+    fi
+
+    LAST_RESULT="exit $rc"
+    write_status
+
+    if [ $rc -ne 0 ]; then
+        exit $rc
+    fi
+}
+
+on_exit() {
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        LAST_RESULT="completed"
+    elif [ "$LAST_RESULT" = "running" ]; then
+        LAST_RESULT="failed with exit $rc"
+    fi
+    write_status
+}
+
+trap on_exit EXIT
+write_status
 
 # Function to wait for service to be running
 wait_for_service() {
@@ -117,8 +186,8 @@ load_db_settings_from_app_ini() {
 
 restore_postgresql_backup() {
     echo "Restoring PostgreSQL backup with upgraded PostgreSQL version..."
-    sysrc postgresql_enable=YES >/dev/null
-    chmod 1777 /tmp
+    run_eval "enable postgresql rc" "sysrc postgresql_enable=YES >/dev/null"
+    run_cmd "set tmp permissions" chmod 1777 /tmp
 
     # Ensure we have a valid data directory before attempting initdb
     PG_DATA_DIR="$(detect_pg_data_dir)"
@@ -133,11 +202,7 @@ restore_postgresql_backup() {
     fi
 
     if [ "$NEEDS_INITDB" = true ]; then
-        if ! service postgresql initdb; then
-            echo "ERROR: PostgreSQL initdb failed. Cannot proceed without a valid data directory."
-            echo "Investigate the error above and resolve manually."
-            exit 1
-        fi
+        run_cmd "initialize postgresql data" service postgresql initdb
         echo "PostgreSQL data directory initialized successfully."
 
         # Validate that the data directory exists and has correct ownership
@@ -154,14 +219,14 @@ restore_postgresql_backup() {
         if [ "$PG_OWNER" != "postgres" ]; then
             echo "ERROR: Data directory owned by '$PG_OWNER' instead of 'postgres'."
             echo "Fixing ownership by running chown postgres:postgres $PG_DATA_DIR"
-            chown -R postgres:postgres "$PG_DATA_DIR"
+            run_cmd "fix postgres data ownership" chown -R postgres:postgres "$PG_DATA_DIR"
         fi
     fi
 
     echo "Starting PostgreSQL service..."
     if ! service postgresql onestart; then
         echo "onestart failed, trying start..."
-        service postgresql start
+        run_cmd "start postgresql service" service postgresql start
     fi
     wait_for_service postgresql || {
         echo "ERROR: PostgreSQL failed to start. Cannot restore backup."
@@ -173,24 +238,24 @@ restore_postgresql_backup() {
     # Restore the dump into the upgraded cluster using the same host/port/name/user settings
     # defined in Gitea's [database] section.
     echo "Restoring database dump..."
-    run_psql_superuser -d postgres -f "$BACKUP_FILE"
+    run_eval "restore postgres dump" "psql -U postgres -v ON_ERROR_STOP=1 -d postgres -f \"$BACKUP_FILE\""
 
     # Ensure the role and database exist for the Gitea config in use.
-    ROLE_EXISTS="$(run_psql_superuser -d template1 -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" 2>/dev/null)"
+    run_eval "check postgres role" "ROLE_EXISTS=\"\$(psql -U postgres -v ON_ERROR_STOP=1 -d template1 -tAc \"SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'\" 2>/dev/null)\""
     if [ "$ROLE_EXISTS" != "1" ]; then
-        run_psql_superuser -d template1 -c "CREATE USER ${DB_USER} CREATEDB;"
+        run_eval "create postgres role" "psql -U postgres -v ON_ERROR_STOP=1 -d template1 -c \"CREATE USER ${DB_USER} CREATEDB;\""
     fi
 
-    DB_EXISTS="$(run_psql_superuser -d template1 -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" 2>/dev/null)"
+    run_eval "check postgres database" "DB_EXISTS=\"\$(psql -U postgres -v ON_ERROR_STOP=1 -d template1 -tAc \"SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'\" 2>/dev/null)\""
     if [ "$DB_EXISTS" != "1" ]; then
-        run_psql_superuser -d template1 -c "CREATE DATABASE ${DB_NAME} WITH OWNER ${DB_USER} TEMPLATE template0 ENCODING UTF8 LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8';"
+        run_eval "create postgres database" "psql -U postgres -v ON_ERROR_STOP=1 -d template1 -c \"CREATE DATABASE ${DB_NAME} WITH OWNER ${DB_USER} TEMPLATE template0 ENCODING UTF8 LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8';\""
     fi
 
     if [ -n "$DB_PASS" ]; then
-        run_psql_superuser -d template1 -c "ALTER USER ${DB_USER} WITH PASSWORD '${DB_PASS}';"
+        run_eval "set postgres password" "psql -U postgres -v ON_ERROR_STOP=1 -d template1 -c \"ALTER USER ${DB_USER} WITH PASSWORD '${DB_PASS}';\""
     fi
 
-    run_psql_superuser -d "${DB_NAME}" -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+    run_eval "ensure pg_trgm extension" "psql -U postgres -v ON_ERROR_STOP=1 -d \"${DB_NAME}\" -c \"CREATE EXTENSION IF NOT EXISTS pg_trgm;\""
     cleanup_backup
 }
 
@@ -229,15 +294,15 @@ echo "Upgrading Gitea plugin..."
 
 # Check existing config before starting
 echo "Configuring Gitea service..."
-sysrc gitea_enable=NO
-sysrc gitea_configcheck_enable=NO
-service gitea onestop >/dev/null 2>&1 || true
+run_cmd "disable gitea rc" sysrc gitea_enable=NO
+run_cmd "disable gitea configcheck" sysrc gitea_configcheck_enable=NO
+run_eval "stop gitea if running" "service gitea onestop >/dev/null 2>&1 || true"
 
 # Set Permissions for config
 echo "Setting permissions..."
-chown -R git:git /usr/local/etc/gitea/conf
-chown -R git:git /usr/local/share/gitea
-chmod 1777 /tmp
+run_cmd "set gitea conf ownership" chown -R git:git /usr/local/etc/gitea/conf
+run_cmd "set gitea data ownership" chown -R git:git /usr/local/share/gitea
+run_cmd "set tmp permissions" chmod 1777 /tmp
 
 # Start Database
 # On PostgreSQL upgrades the new cluster may not be initialized yet.
@@ -251,10 +316,7 @@ if ! service postgresql onestatus >/dev/null 2>&1; then
         if [ -n "$PG_DATA_DIR" ] && [ -d "$PG_DATA_DIR" ]; then
             echo "PostgreSQL data directory already exists at $PG_DATA_DIR"
         else
-        if ! service postgresql initdb; then
-            echo "ERROR: PostgreSQL initdb failed. Check logs at /var/log/messages for details."
-            exit 1
-        fi
+        run_cmd "initialize postgresql data" service postgresql initdb
         echo "PostgreSQL data directory initialized successfully."
 
         # Validate the data directory was created without requiring a running server
@@ -269,7 +331,7 @@ if ! service postgresql onestatus >/dev/null 2>&1; then
         PG_OWNER="$(ls -ld "$PG_DATA_DIR" 2>/dev/null | awk '{print $3}')"
         if [ "$PG_OWNER" != "postgres" ]; then
             echo "Fixing data directory ownership: $PG_DATA_DIR"
-            chown -R postgres:postgres "$PG_DATA_DIR"
+            run_cmd "fix postgres data ownership" chown -R postgres:postgres "$PG_DATA_DIR"
         fi
         fi
     else
@@ -279,7 +341,7 @@ fi
 echo "Starting PostgreSQL service..."
 if ! service postgresql onestart; then
     echo "onestart failed, trying start..."
-    service postgresql start
+    run_cmd "start postgresql service" service postgresql start
 fi
 wait_for_service postgresql || {
     echo "ERROR: PostgreSQL failed to start. Aborting upgrade."
@@ -288,8 +350,8 @@ wait_for_service postgresql || {
 
 # Start Gitea
 echo "Starting Gitea service..."
-sysrc gitea_enable=YES
-service gitea start || echo "Gitea may already be running"
+run_cmd "enable gitea rc" sysrc gitea_enable=YES
+run_eval "start gitea service" "service gitea start || echo \"Gitea may already be running\""
 wait_for_service gitea
 
 echo "Gitea upgrade complete!"
