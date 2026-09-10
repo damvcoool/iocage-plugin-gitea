@@ -65,6 +65,20 @@ detect_pg_version() {
     fi
 }
 
+detect_pg_data_dir() {
+    # Prefer explicit rc setting when present.
+    data_dir="$(sysrc -n postgresql_data 2>/dev/null || true)"
+    if [ -n "$data_dir" ] && [ -d "$data_dir" ]; then
+        echo "$data_dir"
+        return 0
+    fi
+
+    # Fallback to default FreeBSD PostgreSQL location.
+    if [ -d /var/db/postgres ]; then
+        find /var/db/postgres -maxdepth 1 -type d -name 'data*' 2>/dev/null | sort | tail -n 1
+    fi
+}
+
 normalize_db_program() {
     case "$1" in
         postgres|postgresql|pgsql)
@@ -103,7 +117,7 @@ restore_postgresql_backup() {
     chmod 1777 /tmp
 
     # Ensure we have a valid data directory before attempting initdb
-    PG_DATA_DIR="$(su -m postgres -c 'psql -tAc "SHOW data_directory;"' 2>/dev/null | xargs)"
+    PG_DATA_DIR="$(detect_pg_data_dir)"
     NEEDS_INITDB=false
 
     if ! service postgresql onestatus >/dev/null 2>&1; then
@@ -123,7 +137,7 @@ restore_postgresql_backup() {
         echo "PostgreSQL data directory initialized successfully."
 
         # Validate that the data directory exists and has correct ownership
-        PG_DATA_DIR="$(su -m postgres -c 'psql -tAc "SHOW data_directory;"' 2>/dev/null | xargs)"
+        PG_DATA_DIR="$(detect_pg_data_dir)"
         if [ -z "$PG_DATA_DIR" ] || [ ! -d "$PG_DATA_DIR" ]; then
             echo "ERROR: Data directory was not created at expected location: $PG_DATA_DIR"
             echo "The package may use a different data directory path for this PostgreSQL version."
@@ -227,14 +241,18 @@ if ! service postgresql onestatus >/dev/null 2>&1; then
     echo "PostgreSQL service not running — initializing data directory..."
     # Only initdb if we know we have PostgreSQL installed and this is a fresh start
     if command -v pg_ctl >/dev/null 2>&1; then
+        PG_DATA_DIR="$(detect_pg_data_dir)"
+        if [ -n "$PG_DATA_DIR" ] && [ -d "$PG_DATA_DIR" ]; then
+            echo "PostgreSQL data directory already exists at $PG_DATA_DIR"
+        else
         if ! service postgresql initdb; then
             echo "ERROR: PostgreSQL initdb failed. Check logs at /var/log/messages for details."
             exit 1
         fi
         echo "PostgreSQL data directory initialized successfully."
 
-        # Validate the data directory was created
-        PG_DATA_DIR="$(su -m postgres -c 'psql -tAc "SHOW data_directory;"' 2>/dev/null | xargs)"
+        # Validate the data directory was created without requiring a running server
+        PG_DATA_DIR="$(detect_pg_data_dir)"
         if [ -z "$PG_DATA_DIR" ] || [ ! -d "$PG_DATA_DIR" ]; then
             echo "ERROR: Data directory not found after initdb at $PG_DATA_DIR"
             echo "Check PostgreSQL version and cluster name configuration."
@@ -246,6 +264,7 @@ if ! service postgresql onestatus >/dev/null 2>&1; then
         if [ "$PG_OWNER" != "postgres" ]; then
             echo "Fixing data directory ownership: $PG_DATA_DIR"
             chown -R postgres:postgres "$PG_DATA_DIR"
+        fi
         fi
     else
         echo "Warning: pg_ctl not found. PostgreSQL may not be installed."
