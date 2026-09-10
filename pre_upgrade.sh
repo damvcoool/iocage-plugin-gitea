@@ -81,6 +81,6 @@ echo "Creating PostgreSQL backup before upgrade..."
 # Do not initdb before an upgrade. The existing database must remain active until the
 # upgraded PostgreSQL service is running and the data is restored into the new cluster.
 service postgresql onestatus >/dev/null 2>&1 || service postgresql onestart
-su -m postgres -c "pg_dumpall -f $BACKUP_FILE"
+pg_dumpall -U postgres -f "$BACKUP_FILE"
 chmod 600 "$BACKUP_FILE"
 echo "PostgreSQL backup saved to $BACKUP_FILE"

@@ -96,6 +96,10 @@ cleanup_backup() {
     echo "Removed pre-upgrade backup artifacts."
 }
 
+run_psql_superuser() {
+    psql -U postgres -v ON_ERROR_STOP=1 "$@"
+}
+
 load_db_settings_from_app_ini() {
     DB_HOST="$(read_ini_value "database" "HOST" || echo "127.0.0.1")"
     DB_PORT="5432"
@@ -169,24 +173,24 @@ restore_postgresql_backup() {
     # Restore the dump into the upgraded cluster using the same host/port/name/user settings
     # defined in Gitea's [database] section.
     echo "Restoring database dump..."
-    su -m postgres -c "psql -v ON_ERROR_STOP=1 -d postgres -f \"$BACKUP_FILE\""
+    run_psql_superuser -d postgres -f "$BACKUP_FILE"
 
     # Ensure the role and database exist for the Gitea config in use.
-    ROLE_EXISTS="$(su -m postgres -c "psql -d template1 -tAc \"SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'\"" 2>/dev/null)"
+    ROLE_EXISTS="$(run_psql_superuser -d template1 -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" 2>/dev/null)"
     if [ "$ROLE_EXISTS" != "1" ]; then
-        su -m postgres -c "psql -d template1 -c \"CREATE USER ${DB_USER} CREATEDB;\""
+        run_psql_superuser -d template1 -c "CREATE USER ${DB_USER} CREATEDB;"
     fi
 
-    DB_EXISTS="$(su -m postgres -c "psql -d template1 -tAc \"SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'\"" 2>/dev/null)"
+    DB_EXISTS="$(run_psql_superuser -d template1 -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" 2>/dev/null)"
     if [ "$DB_EXISTS" != "1" ]; then
-        su -m postgres -c "psql -d template1 -c \"CREATE DATABASE ${DB_NAME} WITH OWNER ${DB_USER} TEMPLATE template0 ENCODING UTF8 LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8';\""
+        run_psql_superuser -d template1 -c "CREATE DATABASE ${DB_NAME} WITH OWNER ${DB_USER} TEMPLATE template0 ENCODING UTF8 LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8';"
     fi
 
     if [ -n "$DB_PASS" ]; then
-        su -m postgres -c "psql -d template1 -c \"ALTER USER ${DB_USER} WITH PASSWORD '${DB_PASS}';\""
+        run_psql_superuser -d template1 -c "ALTER USER ${DB_USER} WITH PASSWORD '${DB_PASS}';"
     fi
 
-    su -m postgres -c "psql -d \"${DB_NAME}\" -c \"CREATE EXTENSION IF NOT EXISTS pg_trgm;\""
+    run_psql_superuser -d "${DB_NAME}" -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
     cleanup_backup
 }
 
@@ -225,7 +229,9 @@ echo "Upgrading Gitea plugin..."
 
 # Check existing config before starting
 echo "Configuring Gitea service..."
+sysrc gitea_enable=NO
 sysrc gitea_configcheck_enable=NO
+service gitea onestop >/dev/null 2>&1 || true
 
 # Set Permissions for config
 echo "Setting permissions..."
@@ -282,6 +288,7 @@ wait_for_service postgresql || {
 
 # Start Gitea
 echo "Starting Gitea service..."
+sysrc gitea_enable=YES
 service gitea start || echo "Gitea may already be running"
 wait_for_service gitea
 
