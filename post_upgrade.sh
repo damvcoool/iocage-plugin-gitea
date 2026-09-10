@@ -23,17 +23,39 @@ wait_for_service() {
     return 1
 }
 
+read_ini_value() {
+    section="$1"
+    key="$2"
+    if [ ! -f "$APP_INI" ]; then
+        return 1
+    fi
+
+    awk -F '=' -v section="$section" -v key="$key" '
+        function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+        /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+            current = trim(substr($0, 2, length($0) - 2))
+            next
+        }
+        current == section {
+            if (index($0, "=") > 0) {
+                k = trim(substr($0, 1, index($0, "=") - 1))
+                v = trim(substr($0, index($0, "=") + 1))
+                gsub(/"/, "", v)
+                if (toupper(k) == toupper(key)) {
+                    print v
+                    exit
+                }
+            }
+        }
+    ' "$APP_INI" 2>/dev/null | head -n 1
+}
+
 detect_db_type() {
     if [ -f "$APP_INI" ]; then
-        awk -F '=' '
-            /^[[:space:]]*DB_TYPE[[:space:]]*=/ {
-                value=$2
-                gsub(/[[:space:]]/, "", value)
-                gsub(/"/, "", value)
-                print tolower(value)
-                exit
-            }
-        ' "$APP_INI"
+        value="$(read_ini_value "database" "DB_TYPE")"
+        if [ -n "$value" ]; then
+            printf '%s\n' "$value" | tr '[:upper:]' '[:lower:]' | head -n 1
+        fi
     fi
 }
 
@@ -59,14 +81,54 @@ cleanup_backup() {
     echo "Removed pre-upgrade backup artifacts."
 }
 
+load_db_settings_from_app_ini() {
+    DB_HOST="$(read_ini_value "database" "HOST" || echo "127.0.0.1")"
+    DB_PORT="5432"
+    DB_USER="$(read_ini_value "database" "USER" || echo "gitea")"
+    DB_NAME="$(read_ini_value "database" "NAME" || echo "gitea")"
+    DB_PASS="$(read_ini_value "database" "PASSWD" || echo "")"
+
+    case "$DB_HOST" in
+        *:*)
+            DB_PORT="${DB_HOST##*:}"
+            DB_HOST="${DB_HOST%:*}"
+            ;;
+    esac
+}
+
 restore_postgresql_backup() {
     echo "Restoring PostgreSQL backup with upgraded PostgreSQL version..."
     sysrc postgresql_enable=YES >/dev/null
     chmod 1777 /tmp
-    service postgresql initdb || true
+
+    if ! service postgresql onestatus >/dev/null 2>&1; then
+        echo "Initializing PostgreSQL data directory for upgraded service..."
+        service postgresql initdb || true
+    fi
+
     service postgresql onestart || service postgresql start || true
     wait_for_service postgresql
-    su -m postgres -c "psql -v ON_ERROR_STOP=1 -f $BACKUP_FILE postgres"
+
+    load_db_settings_from_app_ini
+
+    # Restore the dump into the upgraded cluster using the same host/port/name/user settings
+    # defined in Gitea's [database] section.
+    su -m postgres -c "psql -v ON_ERROR_STOP=1 -d postgres -f \"$BACKUP_FILE\""
+
+    # Ensure the role and database exist for the Gitea config in use.
+    if ! su -m postgres -c "psql -d template1 -tAc \"SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'\"" | grep -q 1; then
+        su -m postgres -c "psql -d template1 -c \"CREATE USER ${DB_USER} CREATEDB;\""
+    fi
+
+    if ! su -m postgres -c "psql -d template1 -tAc \"SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'\"" | grep -q 1; then
+        su -m postgres -c "psql -d template1 -c \"CREATE DATABASE ${DB_NAME} WITH OWNER ${DB_USER} TEMPLATE template0 ENCODING UTF8 LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8';\""
+    fi
+
+    if [ -n "$DB_PASS" ]; then
+        su -m postgres -c "psql -d template1 -c \"ALTER USER ${DB_USER} WITH PASSWORD '${DB_PASS}';\""
+    fi
+
+    su -m postgres -c "psql -d \"${DB_NAME}\" -c \"CREATE EXTENSION IF NOT EXISTS pg_trgm;\""
     cleanup_backup
 }
 
@@ -114,8 +176,14 @@ chown -R git:git /usr/local/share/gitea
 chmod 1777 /tmp
 
 # Start Database
+# On PostgreSQL upgrades the new cluster may not be initialized yet.
+# Ensure the service is initialized before starting the upgraded instance.
 echo "Starting PostgreSQL database..."
-service postgresql start || echo "PostgreSQL may already be running"
+if ! service postgresql onestatus >/dev/null 2>&1; then
+    echo "Initializing PostgreSQL data directory for upgraded service..."
+    service postgresql initdb || true
+fi
+service postgresql onestart || service postgresql start || echo "PostgreSQL may already be running"
 wait_for_service postgresql
 
 # Start Gitea

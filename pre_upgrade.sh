@@ -6,17 +6,39 @@ APP_INI="/usr/local/etc/gitea/conf/app.ini"
 META_FILE="/root/.gitea_db_upgrade_meta"
 BACKUP_FILE="/root/gitea_pg_backup.sql"
 
+read_ini_value() {
+    section="$1"
+    key="$2"
+    if [ ! -f "$APP_INI" ]; then
+        return 1
+    fi
+
+    awk -F '=' -v section="$section" -v key="$key" '
+        function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+        /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+            current = trim(substr($0, 2, length($0) - 2))
+            next
+        }
+        current == section {
+            if (index($0, "=") > 0) {
+                k = trim(substr($0, 1, index($0, "=") - 1))
+                v = trim(substr($0, index($0, "=") + 1))
+                gsub(/"/, "", v)
+                if (toupper(k) == toupper(key)) {
+                    print v
+                    exit
+                }
+            }
+        }
+    ' "$APP_INI" 2>/dev/null | head -n 1
+}
+
 detect_db_type() {
     if [ -f "$APP_INI" ]; then
-        awk -F '=' '
-            /^[[:space:]]*DB_TYPE[[:space:]]*=/ {
-                value=$2
-                gsub(/[[:space:]]/, "", value)
-                gsub(/"/, "", value)
-                print tolower(value)
-                exit
-            }
-        ' "$APP_INI"
+        value="$(read_ini_value "database" "DB_TYPE")"
+        if [ -n "$value" ]; then
+            printf '%s\n' "$value" | tr '[:upper:]' '[:lower:]' | head -n 1
+        fi
     fi
 }
 
@@ -56,6 +78,8 @@ if [ "$DB_PROGRAM" != "postgresql" ]; then
 fi
 
 echo "Creating PostgreSQL backup before upgrade..."
+# Do not initdb before an upgrade. The existing database must remain active until the
+# upgraded PostgreSQL service is running and the data is restored into the new cluster.
 service postgresql onestatus >/dev/null 2>&1 || service postgresql onestart
 su -m postgres -c "pg_dumpall -f $BACKUP_FILE"
 chmod 600 "$BACKUP_FILE"
