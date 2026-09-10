@@ -158,11 +158,13 @@ restore_postgresql_backup() {
     su -m postgres -c "psql -v ON_ERROR_STOP=1 -d postgres -f \"$BACKUP_FILE\""
 
     # Ensure the role and database exist for the Gitea config in use.
-    if ! su -m postgres -c "psql -d template1 -tAc \"SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'\"" | grep -q 1; then
+    ROLE_EXISTS="$(su -m postgres -c "psql -d template1 -tAc \"SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'\"" 2>/dev/null)"
+    if [ "$ROLE_EXISTS" != "1" ]; then
         su -m postgres -c "psql -d template1 -c \"CREATE USER ${DB_USER} CREATEDB;\""
     fi
 
-    if ! su -m postgres -c "psql -d template1 -tAc \"SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'\"" | grep -q 1; then
+    DB_EXISTS="$(su -m postgres -c "psql -d template1 -tAc \"SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'\"" 2>/dev/null)"
+    if [ "$DB_EXISTS" != "1" ]; then
         su -m postgres -c "psql -d template1 -c \"CREATE DATABASE ${DB_NAME} WITH OWNER ${DB_USER} TEMPLATE template0 ENCODING UTF8 LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8';\""
     fi
 
