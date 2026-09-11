@@ -148,6 +148,26 @@ detect_pg_data_dir() {
     fi
 }
 
+recover_stale_postgresql_state() {
+    PG_DATA_DIR="${1:-$(detect_pg_data_dir)}"
+    if [ -z "$PG_DATA_DIR" ] || [ ! -d "$PG_DATA_DIR" ]; then
+        return 0
+    fi
+
+    PID_FILE="$PG_DATA_DIR/postmaster.pid"
+    if [ -f "$PID_FILE" ]; then
+        PID="$(awk 'NR==1 {print $1}' "$PID_FILE" 2>/dev/null || true)"
+        if [ -n "$PID" ] && ! kill -0 "$PID" 2>/dev/null; then
+            echo "Detected stale PostgreSQL postmaster.pid for PID $PID; removing stale state."
+            rm -f "$PID_FILE"
+        fi
+    fi
+
+    if [ -f "$PID_FILE" ] && ! kill -0 "$(awk 'NR==1 {print $1}' "$PID_FILE" 2>/dev/null || true)" 2>/dev/null; then
+        rm -f "$PID_FILE"
+    fi
+}
+
 normalize_db_program() {
     case "$1" in
         postgres|postgresql|pgsql)
@@ -347,6 +367,10 @@ if ! service postgresql onestatus >/dev/null 2>&1; then
     fi
 fi
 echo "Starting PostgreSQL service..."
+PG_DATA_DIR="$(detect_pg_data_dir)"
+if [ -n "$PG_DATA_DIR" ] && [ -d "$PG_DATA_DIR" ]; then
+    recover_stale_postgresql_state "$PG_DATA_DIR"
+fi
 if ! service postgresql onestart; then
     echo "onestart failed, trying start..."
     run_cmd "start postgresql service" service postgresql start
