@@ -3,23 +3,25 @@
 set -e
 
 APP_INI="/usr/local/etc/gitea/conf/app.ini"
+APP_INI_CANDIDATES="/usr/local/etc/gitea/conf/app.ini /usr/local/etc/gitea/app.ini /usr/local/etc/gitea/custom/conf/app.ini"
 META_FILE="/root/.gitea_db_upgrade_meta"
 BACKUP_FILE="/root/gitea_pg_backup.sql"
 
 read_ini_value() {
-    section="$1"
-    key="$2"
-    if [ ! -f "$APP_INI" ]; then
+    ini_file="$1"
+    section="$2"
+    key="$3"
+    if [ ! -f "$ini_file" ]; then
         return 1
     fi
 
     awk -F '=' -v section="$section" -v key="$key" '
         function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
         /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
-            current = trim(substr($0, 2, length($0) - 2))
+            current = tolower(trim(substr($0, 2, length($0) - 2)))
             next
         }
-        current == section {
+        current == tolower(section) {
             if (index($0, "=") > 0) {
                 k = trim(substr($0, 1, index($0, "=") - 1))
                 v = trim(substr($0, index($0, "=") + 1))
@@ -30,15 +32,32 @@ read_ini_value() {
                 }
             }
         }
-    ' "$APP_INI" 2>/dev/null | head -n 1
+    ' "$ini_file" 2>/dev/null | head -n 1
+}
+
+detect_app_ini() {
+    for candidate in $APP_INI_CANDIDATES; do
+        if [ -f "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
 }
 
 detect_db_type() {
-    if [ -f "$APP_INI" ]; then
-        value="$(read_ini_value "database" "DB_TYPE")"
+    APP_INI_DETECTED="$(detect_app_ini)"
+    if [ -n "$APP_INI_DETECTED" ]; then
+        APP_INI="$APP_INI_DETECTED"
+        value="$(read_ini_value "$APP_INI" "database" "DB_TYPE")"
         if [ -n "$value" ]; then
             printf '%s\n' "$value" | tr '[:upper:]' '[:lower:]' | head -n 1
+            return 0
         fi
+    fi
+
+    # Conservative fallback for existing plugin installs that used PostgreSQL defaults.
+    if command -v pg_dumpall >/dev/null 2>&1 && [ -f /root/dbname ] && [ -f /root/dbuser ]; then
+        echo "postgresql"
     fi
 }
 
