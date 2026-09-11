@@ -160,7 +160,7 @@ normalize_db_program() {
 }
 
 cleanup_backup() {
-    rm -f "$BACKUP_FILE" "$META_FILE"
+    rm -f "$BACKUP_FILE" "$BACKUP_FILE.sanitized" "$META_FILE"
     touch /tmp/.gitea_pg_post_restore
     echo "Removed pre-upgrade backup artifacts."
 }
@@ -235,10 +235,18 @@ restore_postgresql_backup() {
 
     load_db_settings_from_app_ini
 
+    RESTORE_SOURCE="$BACKUP_FILE"
+    if grep -Eq '^CREATE ROLE postgres;$|^ALTER ROLE postgres ' "$BACKUP_FILE" 2>/dev/null; then
+        # pg_dumpall includes postgres role statements that fail on fresh clusters.
+        SANITIZED_BACKUP_FILE="$BACKUP_FILE.sanitized"
+        run_eval "sanitize postgres dump" "sed '/^CREATE ROLE postgres;$/d;/^ALTER ROLE postgres /d' \"$BACKUP_FILE\" > \"$SANITIZED_BACKUP_FILE\""
+        RESTORE_SOURCE="$SANITIZED_BACKUP_FILE"
+    fi
+
     # Restore the dump into the upgraded cluster using the same host/port/name/user settings
     # defined in Gitea's [database] section.
     echo "Restoring database dump..."
-    run_eval "restore postgres dump" "psql -U postgres -v ON_ERROR_STOP=1 -d postgres -f \"$BACKUP_FILE\""
+    run_eval "restore postgres dump" "psql -U postgres -v ON_ERROR_STOP=1 -d postgres -f \"$RESTORE_SOURCE\""
 
     # Ensure the role and database exist for the Gitea config in use.
     run_eval "check postgres role" "ROLE_EXISTS=\"\$(psql -U postgres -v ON_ERROR_STOP=1 -d template1 -tAc \"SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'\" 2>/dev/null)\""
