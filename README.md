@@ -16,7 +16,7 @@ JSON=/tmp/gitea.json
 
 fetch -o "$JSON" "https://raw.githubusercontent.com/damvcoool/iocage-plugin-index/${BRANCH}/gitea.json"
 
-iocage fetch -P "$JSON" --branch "$BRANCH" -n Gitea
+iocage fetch -P "$JSON" -n Gitea
 ```
 
 ---
