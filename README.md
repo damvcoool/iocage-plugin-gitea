@@ -1,4 +1,12 @@
-## HOW-TO Install this fork
+# iocage-plugin-gitea
+
+Unofficial [FreeCORE](https://github.com/freecore-project/) (TrueNAS CORE replacement) plugin to install [Gitea](https://gitea.com/).
+
+---
+
+## Installation
+
+Run the following commands on your FreeCORE host:
 
 ```shell
 BRANCH=master
@@ -8,9 +16,71 @@ fetch -o "$JSON" "https://raw.githubusercontent.com/damvcoool/iocage-plugin-inde
 iocage fetch -P "$JSON" --branch "$BRANCH" -n Gitea
 ```
 
-# iocage-plugin-gitea
+---
 
-iocage plugin for Gitea with enhanced TrueNAS Core 13 compatibility.
+## Post-Installation
+
+After installation completes:
+
+1. Navigate to `http://<jail-ip>:3000/install` in your web browser
+2. Complete the web-based installation wizard
+3. Use the database credentials displayed in the post-install output (also saved in `/root/PLUGIN_INFO`)
+
+### Credentials Location
+
+All credentials are stored securely in the jail's `/root` directory:
+
+- `/root/PLUGIN_INFO` — Complete setup information including database credentials
+
+---
+
+## Configuration
+
+### Service Management
+
+```sh
+# Start/Stop/Restart Gitea
+service gitea start
+service gitea stop
+service gitea restart
+service gitea status
+
+# PostgreSQL
+service postgresql start
+service postgresql stop
+service postgresql restart
+```
+
+### Configuration Files
+
+- Gitea configuration: `/usr/local/etc/gitea/conf/app.ini`
+- Environment variables can be customized in the configuration file
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+**Gitea won't start:**
+
+- Check if PostgreSQL is running: `service postgresql status`
+- Check log file for errors
+
+**SSH for git over SSH:**
+
+- SSH is enabled by default in this plugin
+- Ensure port 22 is accessible if using git over SSH
+
+---
+
+## Version Information
+
+- **Git**: Latest stable version
+- **PostgreSQL**: Auto-dected version
+- **FreeBSD**: Compatible with FreeCORE (FreeBSD-based)
+
+---
 
 ## Features
 
@@ -20,28 +90,18 @@ iocage plugin for Gitea with enhanced TrueNAS Core 13 compatibility.
 - Enhanced IP address detection for various network configurations
 - Better security practices (proper file permissions)
 - Comprehensive post-install information display
+- Support for both static and DHCP network configurations
 
-## Database Setup
+---
 
-A PostgreSQL database is automatically configured during installation:
-- Database name: `gitea`
-- Database user: `gitea`
-- A random password is generated and saved to `/root/PLUGIN_INFO`
+## Contributing
 
-You can use a different database type if you prefer, but you'll need to set it up manually.
+This is a community project. Issues and pull requests are welcome!
 
-## Post-Installation
+## License
 
-After installation completes:
-1. Navigate to `http://<jail-ip>:3000/install` in your web browser
-2. Complete the web-based installation wizard
-3. Use the database credentials displayed in the post-install output (also saved in `/root/PLUGIN_INFO`)
+This plugin configuration is provided as-is. Gitea itself is licensed under MIT License.
 
-## TrueNAS Core 13 Compatibility
+## Disclaimer
 
-This plugin has been optimized for TrueNAS Core 13 with:
-- Dynamic PostgreSQL version detection (no hard-coded paths)
-- Proper PostgreSQL authentication syntax
-- Robust service startup validation
-- Enhanced error handling for jail environments
-- Support for both static and DHCP network configurations 
+This is an unofficial plugin not affiliated with or supported by Gitea or iXsystems. Use at your own risk. 
